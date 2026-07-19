@@ -83,7 +83,7 @@
       const dot = name.lastIndexOf(".");
       const stem = dot > 0 ? name.slice(0, dot) : name;
       const extension = dot > 0 ? name.slice(dot) : ".img";
-      return `${stem}.dsu-avb-nop${extension}`;
+      return `${stem}.dsu-avb-patched${extension}`;
     }
 
     form.addEventListener("submit", async event => {
@@ -119,7 +119,7 @@
         download.download = name;
         download.textContent = `下载 ${name}`;
         result.hidden = false;
-        setStatus("补丁已生成，文件未上传。" );
+        setStatus("补丁已生成。" );
       } catch (error) {
         setStatus(error instanceof Error ? error.message : "处理失败。", true);
       } finally {
