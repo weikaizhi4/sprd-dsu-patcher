@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="SPRD DSU boot init AVB 修补工具">
+  <title>SPRD DSU boot init 修补器</title>
+  <style>
+    :root { color-scheme: light dark; --bg: #f4f7f5; --panel: #ffffff; --ink: #17211d; --muted: #5a6860; --line: #cbd6d0; --accent: #006d57; --accent-ink: #ffffff; --danger: #ab2e21; --code: #eaf0ed; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #161b18; --panel: #202722; --ink: #edf3ee; --muted: #b8c5bd; --line: #49564e; --accent: #53c4a2; --accent-ink: #10221b; --danger: #ff9c8f; --code: #2b362f; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    main { width: min(920px, calc(100% - 32px)); margin: 0 auto; padding: 34px 0 54px; }
+    header { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+    h1 { margin: 0; font-size: 25px; font-weight: 650; }
+    header span, .muted { color: var(--muted); }
+    .workspace { padding: 26px 0; }
+    form { display: grid; gap: 18px; }
+    label { display: grid; gap: 8px; font-weight: 600; }
+    input[type="file"] { width: 100%; padding: 13px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+    button, .download { justify-self: start; border: 0; border-radius: 5px; padding: 10px 16px; background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 650; cursor: pointer; text-decoration: none; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .status { min-height: 24px; margin: 20px 0 0; color: var(--muted); }
+    .status.error { color: var(--danger); }
+    .result { margin-top: 22px; border-top: 1px solid var(--line); padding-top: 20px; }
+    .result[hidden] { display: none; }
+    h2 { margin: 0 0 14px; font-size: 19px; font-weight: 650; }
+    dl { display: grid; grid-template-columns: minmax(150px, 225px) minmax(0, 1fr); gap: 8px 20px; margin: 0 0 20px; }
+    dt { color: var(--muted); }
+    dd { margin: 0; overflow-wrap: anywhere; }
+    code { padding: 2px 5px; background: var(--code); border-radius: 4px; font: 13px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; }
+    ul { margin: 10px 0 22px; padding-left: 22px; }
+    .download { display: inline-block; }
+    @media (max-width: 560px) { main { width: min(100% - 24px, 920px); padding-top: 22px; } header { align-items: flex-start; flex-direction: column; gap: 4px; } dl { grid-template-columns: 1fr; gap: 3px; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>SPRD DSU boot init 修补器</h1>
+      <span>浏览器本地处理</span>
+    </header>
+    <section class="workspace" aria-label="修补工具">
+      <form id="patch-form">
+        <label for="init-file">init ELF 文件
+          <input id="init-file" type="file" required>
+        </label>
+        <button id="submit" type="submit">生成补丁文件</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+    </section>
+    <section id="result" class="result" hidden aria-live="polite">
+      <h2>处理结果</h2>
+      <dl id="summary"></dl>
+      <h2>已执行修改</h2>
+      <ul id="actions"></ul>
+      <a id="download" class="download" href="/" download>下载修补后的 init</a>
+    </section>
+  </main>
+  <script type="module">
+    import { patchInit, sha256Hex } from "./patcher-core.mjs";
+
+    const form = document.getElementById("patch-form");
+    const fileInput = document.getElementById("init-file");
+    const submit = document.getElementById("submit");
+    const status = document.getElementById("status");
+    const result = document.getElementById("result");
+    const summary = document.getElementById("summary");
+    const actions = document.getElementById("actions");
+    const download = document.getElementById("download");
+    let previousUrl = null;
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>'"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", "\"": "&quot;" })[char]);
+    }
+
+    function setStatus(message, isError = false) {
+      status.textContent = message;
+      status.classList.toggle("error", isError);
+    }
+
+    function outputName(name) {
+      const dot = name.lastIndexOf(".");
+      const stem = dot > 0 ? name.slice(0, dot) : name;
+      const extension = dot > 0 ? name.slice(dot) : ".img";
+      return `${stem}.dsu-avb-nop${extension}`;
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const file = fileInput.files[0];
+      if (!file) {
+        setStatus("请选择一个 init ELF 文件。", true);
+        return;
+      }
+      submit.disabled = true;
+      result.hidden = true;
+      setStatus("正在本地定位函数并生成补丁...");
+      try {
+        const input = await file.arrayBuffer();
+        const patched = patchInit(input);
+        const [inputHash, outputHash] = await Promise.all([
+          sha256Hex(new Uint8Array(input)),
+          sha256Hex(patched.bytes),
+        ]);
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
+        previousUrl = URL.createObjectURL(new Blob([patched.bytes], { type: "application/octet-stream" }));
+        const name = outputName(file.name);
+        summary.innerHTML = [
+          ["输入文件", escapeHtml(file.name)],
+          ["输入 SHA-256", `<code>${escapeHtml(inputHash)}</code>`],
+          ["函数上下文候选", "1"],
+          ["分支位置", `<code>0x${patched.offset.toString(16).toUpperCase()}</code>`],
+          ["分支修改", `<code>${escapeHtml(patched.before)} -> ${escapeHtml(patched.after)}</code>`],
+          ["输出 SHA-256", `<code>${escapeHtml(outputHash)}</code>`],
+        ].map(([term, value]) => `<dt>${term}</dt><dd>${value}</dd>`).join("");
+        actions.innerHTML = `<li><code>${escapeHtml(patched.action)}</code></li>`;
+        download.href = previousUrl;
+        download.download = name;
+        download.textContent = `下载 ${name}`;
+        result.hidden = false;
+        setStatus("补丁已生成，文件未上传。" );
+      } catch (error) {
+        setStatus(error instanceof Error ? error.message : "处理失败。", true);
+      } finally {
+        submit.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
