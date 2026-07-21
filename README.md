@@ -1,4 +1,4 @@
-# DSU init NOP Patcher
+# DSU init Patcher
 
 This is a static GitHub Pages build. It uses only browser JavaScript: the
 selected `init` never leaves the browser, and the downloaded file is generated
