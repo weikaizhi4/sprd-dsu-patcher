@@ -83,7 +83,7 @@
       const dot = name.lastIndexOf(".");
       const stem = dot > 0 ? name.slice(0, dot) : name;
       const extension = dot > 0 ? name.slice(dot) : ".img";
-      return `${stem}.dsu-avb-patched${extension}`;
+      return `${stem}.dm-verity-patched${extension}`;
     }
 
     form.addEventListener("submit", async event => {
@@ -98,23 +98,25 @@
       setStatus("正在本地定位函数并生成补丁...");
       try {
         const input = await file.arrayBuffer();
-        const patched = patchInit(input);
-        const [inputHash, outputHash] = await Promise.all([
-          sha256Hex(new Uint8Array(input)),
-          sha256Hex(patched.bytes),
-        ]);
+        const patched = await patchInit(input);
+        const outputHash = await sha256Hex(patched.bytes);
         if (previousUrl) URL.revokeObjectURL(previousUrl);
         previousUrl = URL.createObjectURL(new Blob([patched.bytes], { type: "application/octet-stream" }));
         const name = outputName(file.name);
         summary.innerHTML = [
           ["输入文件", escapeHtml(file.name)],
-          ["输入 SHA-256", `<code>${escapeHtml(inputHash)}</code>`],
-          ["函数上下文候选", "1"],
-          ["分支位置", `<code>0x${patched.offset.toString(16).toUpperCase()}</code>`],
-          ["分支修改", `<code>${escapeHtml(patched.before)} -> ${escapeHtml(patched.after)}</code>`],
+          ["输入 SHA-256", `<code>${escapeHtml(patched.sourceHash)}</code>`],
+          ["补丁逻辑", `<code>${escapeHtml(patched.logic)}</code>`],
+          ["逻辑说明", escapeHtml(patched.description)],
+          ["补丁 VA", `<code>0x${patched.patchVa.toString(16).toUpperCase()}</code>`],
+          ["文件偏移", `<code>0x${patched.patchFileOffset.toString(16).toUpperCase()}</code>`],
+          ["指令修改", `<code>${escapeHtml(patched.before)} -> ${escapeHtml(patched.after)}</code>`],
           ["输出 SHA-256", `<code>${escapeHtml(outputHash)}</code>`],
         ].map(([term, value]) => `<dt>${term}</dt><dd>${value}</dd>`).join("");
-        actions.innerHTML = `<li><code>${escapeHtml(patched.action)}</code></li>`;
+        const actionsList = [`采用 ${patched.logic}`];
+        if (patched.fallbackFrom) actionsList.push(`逻辑一未匹配，已回退：${patched.fallbackFrom}`);
+        actionsList.push(...patched.attempts);
+        actions.innerHTML = actionsList.map(item => `<li><code>${escapeHtml(item)}</code></li>`).join("");
         download.href = previousUrl;
         download.download = name;
         download.textContent = `下载 ${name}`;
